@@ -20,7 +20,5 @@ dist/
 .DS_Store
 
 # Dummy tests
-dummy.fasta
-test.fasta
 opencode.json
 

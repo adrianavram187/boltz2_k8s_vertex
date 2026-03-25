@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gsk-orange: #f36633;
+  --color-gsk-orange-dark: #d95829;
+}

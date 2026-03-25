@@ -1,0 +1,21 @@
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: ml-cluster-queue
+spec:
+  namespaceSelector: {} # Match all namespaces
+  resourceGroups:
+  - coveredResources: ["cpu", "memory"]
+    flavors:
+    - name: standard-flavor
+      resources:
+      - name: "cpu"
+        nominalQuota: 10
+      - name: "memory"
+        nominalQuota: 32Gi
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: gpu-flavor
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 5 # Match the max_node_count in Terraform

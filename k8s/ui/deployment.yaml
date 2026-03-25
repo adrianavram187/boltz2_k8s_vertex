@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-ui
+  namespace: default
+  labels:
+    app: ml-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-ui
+  template:
+    metadata:
+      labels:
+        app: ml-ui
+    spec:
+      containers:
+      - name: ml-ui
+        image: gcr.io/YOUR_PROJECT_ID_HERE/ml-ui:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-ui-service
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    app: ml-ui
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80

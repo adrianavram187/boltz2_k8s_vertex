@@ -1,0 +1,62 @@
+# PIPELINE DEFINITION
+# Name: boltz-inference-pipeline
+# Description: Vertex AI Pipeline for Boltz-2 protein folding inference
+# Inputs:
+#    input_uri: str
+#    output_uri: str
+components:
+  comp-boltz-predict-component:
+    executorLabel: exec-boltz-predict-component
+    inputDefinitions:
+      parameters:
+        input_uri:
+          parameterType: STRING
+        output_uri:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-boltz-predict-component:
+      container:
+        args:
+        - '{{$.inputs.parameters[''input_uri'']}}'
+        - '{{$.inputs.parameters[''output_uri'']}}'
+        command:
+        - /app/run.sh
+        image: gcr.io/YOUR_PROJECT_ID_HERE/boltz-runner:latest
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: NVIDIA_L4
+            type: NVIDIA_L4
+          cpuLimit: 4.0
+          memoryLimit: 16.0
+          resourceCpuLimit: '4'
+          resourceMemoryLimit: 16G
+pipelineInfo:
+  description: Vertex AI Pipeline for Boltz-2 protein folding inference
+  name: boltz-inference-pipeline
+root:
+  dag:
+    tasks:
+      boltz-predict-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-boltz-predict-component
+        inputs:
+          parameters:
+            input_uri:
+              componentInputParameter: input_uri
+            output_uri:
+              componentInputParameter: output_uri
+        taskInfo:
+          name: boltz-predict-component
+  inputDefinitions:
+    parameters:
+      input_uri:
+        parameterType: STRING
+      output_uri:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.0

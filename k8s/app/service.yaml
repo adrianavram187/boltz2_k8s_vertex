@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-job-api-service
+  namespace: default
+spec:
+  type: LoadBalancer # Using LoadBalancer to expose the API publicly for testing
+  selector:
+    app: ml-job-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000

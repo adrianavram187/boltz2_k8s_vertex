@@ -55,47 +55,47 @@ resource "google_container_node_pool" "standard_pool" {
 }
 
 # GPU Node Pool (Autoscales to 0)
-# resource "google_container_node_pool" "gpu_pool" {
-#   name     = "gpu-pool"
-#   cluster  = google_container_cluster.primary.name
-#   location = var.region
-# 
-#   # L4 is only available in specific zones in us-central1 (e.g. us-central1-a, us-central1-c)
-#   node_locations = ["us-central1-a", "us-central1-b", "us-central1-c"]
-# 
-#   initial_node_count = 0
-# 
-#   autoscaling {
-#     min_node_count = 0
-#     max_node_count = 5
-#   }
-# 
-#   node_config {
-#     spot = true # Enable Spot Instances to dramatically reduce costs
-# 
-#     # L4 GPUs require G2 machine types
-#     machine_type = "g2-standard-8"
-# 
-#     guest_accelerator {
-#       type  = "nvidia-l4"
-#       count = 1
-#       gpu_driver_installation_config {
-#         gpu_driver_version = "LATEST"
-#       }
-#     }
-# 
-#     oauth_scopes = [
-#       "https://www.googleapis.com/auth/cloud-platform"
-#     ]
-# 
-#     # Taint prevents standard pods from being scheduled on expensive GPU nodes
-#     taint {
-#       key    = "nvidia.com/gpu"
-#       value  = "present"
-#       effect = "NO_SCHEDULE"
-#     }
-#   }
-# }
+resource "google_container_node_pool" "gpu_pool" {
+  name     = "gpu-pool"
+  cluster  = google_container_cluster.primary.name
+  location = var.region
+
+  # L4 is only available in specific zones in us-central1 (e.g. us-central1-a, us-central1-c)
+  node_locations = ["us-central1-a", "us-central1-b", "us-central1-c"]
+
+  initial_node_count = 0
+
+  autoscaling {
+    min_node_count = 0
+    max_node_count = 5
+  }
+
+  node_config {
+    spot = true # Enable Spot Instances to dramatically reduce costs
+
+    # L4 GPUs require G2 machine types
+    machine_type = "g2-standard-8"
+
+    guest_accelerator {
+      type  = "nvidia-l4"
+      count = 1
+      gpu_driver_installation_config {
+        gpu_driver_version = "LATEST"
+      }
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+
+    # Taint prevents standard pods from being scheduled on expensive GPU nodes
+    taint {
+      key    = "nvidia.com/gpu"
+      value  = "present"
+      effect = "NO_SCHEDULE"
+    }
+  }
+}
 
 # GCS Output Bucket for Boltz-2 Predictions
 resource "google_storage_bucket" "boltz_outputs" {

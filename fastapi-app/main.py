@@ -6,9 +6,32 @@ import uuid
 import os
 import tempfile
 from kubernetes import client, config
+from dotenv import load_dotenv
+
+# Load .env file from the current directory or parent directory
+load_dotenv()
+load_dotenv(dotenv_path="../.env")
 
 from google.cloud import aiplatform
 from google.cloud import storage
+
+
+def get_project_id():
+    project_id = os.environ.get("PROJECT_ID")
+    if not project_id:
+        raise HTTPException(
+            status_code=500, detail="PROJECT_ID environment variable is not set"
+        )
+    return project_id
+
+
+def get_input_bucket():
+    return os.environ.get("INPUT_BUCKET", f"gs://{get_project_id()}-boltz-inputs")
+
+
+def get_output_bucket():
+    return os.environ.get("OUTPUT_BUCKET", f"gs://{get_project_id()}-boltz-outputs")
+
 
 app = FastAPI(title="ML HPC Job Submission API")
 
@@ -49,9 +72,7 @@ async def upload_file(file: UploadFile = File(...)):
     """
     Uploads a FASTA file to the input bucket
     """
-    input_bucket = os.environ.get(
-        "INPUT_BUCKET", "gs://YOUR_PROJECT_ID_HERE-boltz-inputs"
-    )
+    input_bucket = get_input_bucket()
     bucket_name = input_bucket.replace("gs://", "").split("/")[0]
 
     try:
@@ -86,13 +107,10 @@ def submit_prediction(request: PredictionRequest):
         )
 
     job_id = f"ml-job-boltz-2-{uuid.uuid4().hex[:8]}"
-    image = "gcr.io/YOUR_PROJECT_ID_HERE/boltz-runner:latest"
-    output_bucket = os.environ.get(
-        "OUTPUT_BUCKET", "gs://YOUR_PROJECT_ID_HERE-boltz-outputs"
-    )
-    input_bucket = os.environ.get(
-        "INPUT_BUCKET", "gs://YOUR_PROJECT_ID_HERE-boltz-inputs"
-    )
+    project_id = get_project_id()
+    image = f"gcr.io/{project_id}/boltz-runner:latest"
+    output_bucket = get_output_bucket()
+    input_bucket = get_input_bucket()
 
     # Construct full GS URIs
     input_uri = f"{input_bucket}/{request.input_file}"
@@ -198,10 +216,10 @@ def submit_vertex_pipeline(request: PredictionRequest):
         raise HTTPException(status_code=400, detail="Only 'boltz-2' is supported.")
 
     job_id = f"vertex-boltz-{uuid.uuid4().hex[:8]}"
-    project_id = os.environ.get("PROJECT_ID", "YOUR_PROJECT_ID_HERE")
+    project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
-    output_bucket = os.environ.get("OUTPUT_BUCKET", f"gs://{project_id}-boltz-outputs")
-    input_bucket = os.environ.get("INPUT_BUCKET", f"gs://{project_id}-boltz-inputs")
+    output_bucket = get_output_bucket()
+    input_bucket = get_input_bucket()
 
     input_uri = f"{input_bucket}/{request.input_file}"
     output_uri = f"{output_bucket}/outputs/{job_id}/"
@@ -240,7 +258,7 @@ def submit_vertex_pipeline(request: PredictionRequest):
 
 @app.get("/jobs")
 def list_jobs():
-    project_id = os.environ.get("PROJECT_ID", "YOUR_PROJECT_ID_HERE")
+    project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
 
     try:
@@ -295,7 +313,7 @@ def list_jobs():
 
 @app.get("/status/{job_id}")
 def get_job_status(job_id: str):
-    project_id = os.environ.get("PROJECT_ID", "YOUR_PROJECT_ID_HERE")
+    project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
 
     try:
@@ -335,9 +353,7 @@ def get_job_cif(job_id: str):
     """
     Retrieves the generated .cif file for a given job directly from the output bucket.
     """
-    output_bucket = os.environ.get(
-        "OUTPUT_BUCKET", "gs://YOUR_PROJECT_ID_HERE-boltz-outputs"
-    )
+    output_bucket = get_output_bucket()
     bucket_name = output_bucket.replace("gs://", "").split("/")[0]
 
     try:

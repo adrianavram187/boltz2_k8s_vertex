@@ -11,6 +11,7 @@ venv/
 .venv/
 .env
 .ruff_cache/
+boltz_pipeline.yaml
 
 # Node
 node_modules/
@@ -21,4 +22,5 @@ dist/
 
 # Dummy tests
 opencode.json
+.opencode
 

@@ -19,7 +19,9 @@ This repository supports **two distinct architectures** for running heavy machin
 
 Follow these steps to deploy the entire stack to a brand-new Google Cloud project.
 
-### Step 1: GCP Setup & Authentication
+### Common Prerequisites
+
+**Step 1: GCP Setup & Authentication**
 1. Create a new project in Google Cloud Console.
 2. Enable Billing for your new project.
 3. Authenticate your CLI:
@@ -29,102 +31,133 @@ Follow these steps to deploy the entire stack to a brand-new Google Cloud projec
    gcloud auth application-default login
    ```
 
-### Step 2: Global Project ID Replacement
-Before applying infrastructure or building images, you **MUST** replace the hardcoded project ID (`YOUR_PROJECT_ID_HERE`) with your actual `YOUR_NEW_PROJECT_ID`.
+**Step 2: Global Project ID Configuration**
+Before applying infrastructure or building images, you **MUST** create a `.env` file in the root directory and set your `PROJECT_ID`:
 
-Run a global find-and-replace, paying special attention to these files:
-- `terraform/variables.tf` (Default project_id variable)
-- `boltz/submit_pipeline.sh` (PROJECT_ID variable)
-- `fastapi-app/build_push.sh` (PROJECT_ID variable)
-- `ui/build_push.sh` (PROJECT_ID variable)
+```bash
+echo "PROJECT_ID=YOUR_NEW_PROJECT_ID" > .env
+```
+This `.env` file is loaded by the bash scripts and the FastAPI backend.
 
 ---
 
-### Step 3: Choose Your Implementation Path
+### Choose Your Implementation Path
 
-#### Path A: Vertex AI Pipelines (Serverless GPUs)
-This is the default configuration. The UI and Backend are already wired to use this.
-1. Leave `terraform/main.tf` as is (the `gpu_pool` should be commented out).
-2. Proceed directly to **Step 4**.
+Choose either **Path A** (Serverless Vertex AI - recommended) or **Path B** (K8s Kueue with Spot Nodes). Follow the steps exclusively for your chosen path.
 
-#### Path B: Kubernetes Kueue (GKE Spot Node Pools)
-If you want to use the native K8s job scheduler instead of Vertex AI:
+---
+
+### Path A: Vertex AI Pipelines (Serverless GPUs)
+
+*This is the default configuration requiring no code changes.*
+
+**Step A.1: Infrastructure Provisioning (Terraform)**
+```bash
+cd terraform
+terraform init
+export TF_VAR_project_id=$(grep PROJECT_ID ../.env | cut -d '=' -f2)
+terraform apply -auto-approve
+cd ..
+```
+
+**Step A.2: Kubernetes Authentication**
+```bash
+export $(grep -v '^#' .env | xargs)
+gcloud container clusters get-credentials ml-hpc-cluster --region us-central1 --project $PROJECT_ID
+```
+
+**Step A.3: Build the ML Runner (Boltz-2)**
+```bash
+cd boltz
+pip install kfp google-cloud-aiplatform python-dotenv
+./submit_pipeline.sh
+cd ..
+```
+
+**Step A.4: Build Application Images (FastAPI & UI)**
+```bash
+cd fastapi-app
+./build_push.sh
+cd ../ui
+./build_push.sh
+cd ..
+```
+
+**Step A.5: Deploy Core Services to Kubernetes**
+```bash
+export $(grep -v '^#' .env | xargs)
+envsubst < k8s/app/rbac.yaml | kubectl apply -f -
+envsubst < k8s/app/deployment.yaml | kubectl apply -f -
+kubectl apply -f k8s/app/service.yaml
+envsubst < k8s/ui/deployment.yaml | kubectl apply -f -
+```
+
+**Step A.6: Access the Platform!**
+```bash
+kubectl get svc ml-ui-service -n default
+```
+Wait a minute or two for GCP to assign an `EXTERNAL-IP`. Copy that IP into your browser (e.g. `http://34.x.y.z`).
+
+---
+
+### Path B: Kubernetes Kueue (GKE Spot Node Pools)
+
+**Step B.1: Code Modifications**
 1. Open `terraform/main.tf` and uncomment the `google_container_node_pool.gpu_pool` block.
 2. Open `ui/src/pages/Home.tsx` and change the fetch call inside `handleUploadAndRun` from `/predict-vertex` to `/predict`. 
 3. Update the `/jobs` and `/status` endpoints in `fastapi-app/main.py` to use `k8s_batch_v1` instead of `aiplatform`.
 
----
-
-### Step 4: Infrastructure Provisioning (Terraform)
-This will create the GKE Cluster, Workload Identity Service Accounts, and Cloud Storage buckets.
-
+**Step B.2: Infrastructure Provisioning (Terraform)**
 ```bash
 cd terraform
 terraform init
+export TF_VAR_project_id=$(grep PROJECT_ID ../.env | cut -d '=' -f2)
 terraform apply -auto-approve
+cd ..
 ```
 
-### Step 5: Kubernetes Authentication
-Link `kubectl` to your newly created cluster so you can deploy the APIs:
+**Step B.3: Kubernetes Auth & Kueue Setup**
 ```bash
-gcloud container clusters get-credentials ml-hpc-cluster --region us-central1 --project YOUR_NEW_PROJECT_ID
-```
+export $(grep -v '^#' .env | xargs)
+gcloud container clusters get-credentials ml-hpc-cluster --region us-central1 --project $PROJECT_ID
 
-*(If using Path B: Kueue)* Install Kueue and apply the queues:
-```bash
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.10.0/manifests.yaml
 kubectl wait deploy/kueue-controller-manager -n kueue-system --for=condition=available --timeout=5m
-cd ../k8s/kueue
-kubectl apply -f resource-flavor.yaml
-kubectl apply -f cluster-queue.yaml
-kubectl apply -f local-queue.yaml
+kubectl apply -f k8s/kueue/resource-flavor.yaml
+kubectl apply -f k8s/kueue/cluster-queue.yaml
+kubectl apply -f k8s/kueue/local-queue.yaml
 ```
 
-### Step 6: Build and Compile the Vertex AI Pipeline
-You must build the Boltz-2 container. If using Vertex AI, this also compiles the Python pipeline definition into a YAML file.
-
+**Step B.4: Build the ML Runner (Boltz-2)**
 ```bash
-cd ../boltz
-# Install the Kubeflow Pipelines compiler (Required for Path A)
-pip install kfp google-cloud-aiplatform
-# Build the Docker image, push it to GCR, and compile the pipeline
+cd boltz
+pip install kfp google-cloud-aiplatform python-dotenv
 ./submit_pipeline.sh
+cd ..
 ```
 
-### Step 7: Build and Deploy the Application
-**1. FastAPI Backend**
+**Step B.5: Build Application Images (FastAPI & UI)**
 ```bash
-cd ../fastapi-app
+cd fastapi-app
 ./build_push.sh
-```
-
-**2. React UI**
-```bash
 cd ../ui
 ./build_push.sh
+cd ..
 ```
 
-### Step 8: Deploy to Kubernetes
-Deploy the workloads and link the IAM Workload Identity to your Kubernetes Service Accounts:
-
+**Step B.6: Deploy Core Services to Kubernetes**
 ```bash
-# 1. Setup the Kubernetes Service Accounts linked to IAM
-kubectl apply -f k8s/app/rbac.yaml
-
-# 2. Deploy the FastAPI Backend
-kubectl apply -f k8s/app/deployment.yaml
+export $(grep -v '^#' .env | xargs)
+envsubst < k8s/app/rbac.yaml | kubectl apply -f -
+envsubst < k8s/app/deployment.yaml | kubectl apply -f -
 kubectl apply -f k8s/app/service.yaml
-
-# 3. Deploy the React UI Reverse Proxy
-kubectl apply -f k8s/ui/deployment.yaml
+envsubst < k8s/ui/deployment.yaml | kubectl apply -f -
 ```
 
-### Step 9: Access the Platform!
-The React UI is deployed behind an external K8s LoadBalancer. Find its public IP:
-
+**Step B.7: Access the Platform!**
 ```bash
 kubectl get svc ml-ui-service -n default
 ```
-Wait a minute or two for GCP to assign an `EXTERNAL-IP`. Copy that IP into your browser (e.g. `http://34.x.y.z`). 
+Wait a minute or two for GCP to assign an `EXTERNAL-IP`. Copy that IP into your browser (e.g. `http://34.x.y.z`).
 
 You can now drag and drop a `dummy.fasta` file, submit the job, and watch the platform dynamically scale up a Spot GPU in real-time to fold the protein!

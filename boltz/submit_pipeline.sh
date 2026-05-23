@@ -2,7 +2,16 @@
 set -e
 
 # Configuration
-export PROJECT_ID="YOUR_PROJECT_ID_HERE"
+# Load .env from root if it exists
+if [ -f "../.env" ]; then
+    export $(grep -v '^#' ../.env | xargs)
+fi
+
+if [ -z "$PROJECT_ID" ]; then
+    echo "ERROR: PROJECT_ID environment variable is not set. Please set it in ../.env or export it."
+    exit 1
+fi
+
 export REGION="us-central1"
 IMAGE_NAME="boltz-runner"
 IMAGE_TAG="latest"

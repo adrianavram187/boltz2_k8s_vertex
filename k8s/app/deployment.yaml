@@ -18,14 +18,16 @@ spec:
       serviceAccountName: fastapi-sa
       containers:
       - name: api
-        image: gcr.io/YOUR_PROJECT_ID_HERE/fastapi-app:latest
+        image: gcr.io/${PROJECT_ID}/fastapi-app:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
         env:
         - name: KUBERNETES_PORT
           value: "tcp://10.0.0.1:443" # Dummy env var just to trigger incluster config
+        - name: PROJECT_ID
+          value: "${PROJECT_ID}"
         - name: OUTPUT_BUCKET
-          value: "gs://YOUR_PROJECT_ID_HERE-boltz-outputs"
+          value: "gs://${PROJECT_ID}-boltz-outputs"
         - name: INPUT_BUCKET
-          value: "gs://YOUR_PROJECT_ID_HERE-boltz-inputs"
+          value: "gs://${PROJECT_ID}-boltz-inputs"

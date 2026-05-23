@@ -2,8 +2,18 @@ import os
 from kfp import dsl
 from kfp import compiler
 
+import sys
+from dotenv import load_dotenv
+
+# Load .env file from the current directory or parent directory
+load_dotenv()
+load_dotenv(dotenv_path="../.env")
+
 # Project configuration
-PROJECT_ID = os.environ.get("PROJECT_ID", "YOUR_PROJECT_ID_HERE")
+PROJECT_ID = os.environ.get("PROJECT_ID")
+if not PROJECT_ID:
+    print("ERROR: PROJECT_ID environment variable is not set")
+    sys.exit(1)
 REGION = os.environ.get("REGION", "us-central1")
 IMAGE_URI = f"gcr.io/{PROJECT_ID}/boltz-runner:latest"
 

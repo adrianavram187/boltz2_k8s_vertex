@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Depends, Header
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,6 +7,9 @@ import os
 import tempfile
 from kubernetes import client, config
 from dotenv import load_dotenv
+
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 # Load .env file from the current directory or parent directory
 load_dotenv()
@@ -34,6 +37,44 @@ def get_output_bucket():
 
 
 app = FastAPI(title="ML HPC Job Submission API")
+api_router = APIRouter(prefix="/api")
+
+
+@app.get("/health", include_in_schema=False)
+def health_check():
+    """Health check endpoint for GCP Load Balancer. Does not require IAP."""
+    return {"status": "healthy"}
+
+
+async def verify_iap(x_goog_iap_jwt_assertion: str = Header(None)):
+    """
+    Validates the IAP JWT assertion to ensure the request came through Google Cloud IAP.
+    If the header is missing, we allow it for local development, but in a strict
+    production setting you'd want to require it. We will require it here for security,
+    unless disabled via env var.
+    """
+    if os.environ.get("DISABLE_IAP_VALIDATION", "false").lower() == "true":
+        return None
+
+    if not x_goog_iap_jwt_assertion:
+        raise HTTPException(
+            status_code=401, detail="Missing X-Goog-IAP-JWT-Assertion header"
+        )
+
+    try:
+        # Validate the JWT. For audience, we could optionally provide the backend service's expected audience
+        # which looks like `/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID`
+        # But even without the audience, verifying it's signed by Google and not expired is good.
+        # To be fully secure, you SHOULD check the audience. For simplicity, we just decode and verify signature.
+        claim = id_token.verify_token(
+            x_goog_iap_jwt_assertion,
+            google_requests.Request(),
+            certs_url="https://www.gstatic.com/iap/verify/public_key",
+        )
+        return claim
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid IAP JWT: {e}")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,7 +108,7 @@ class PredictionResponse(BaseModel):
     message: str
 
 
-@app.post("/upload")
+@api_router.post("/upload", dependencies=[Depends(verify_iap)])
 async def upload_file(file: UploadFile = File(...)):
     """
     Uploads a FASTA file to the input bucket
@@ -95,7 +136,9 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
-@app.post("/predict", response_model=PredictionResponse)
+@api_router.post(
+    "/predict", response_model=PredictionResponse, dependencies=[Depends(verify_iap)]
+)
 def submit_prediction(request: PredictionRequest):
     if not k8s_batch_v1:
         raise HTTPException(status_code=500, detail="Kubernetes client not configured.")
@@ -206,7 +249,11 @@ def submit_prediction(request: PredictionRequest):
 from google.cloud import aiplatform
 
 
-@app.post("/predict-vertex", response_model=PredictionResponse)
+@api_router.post(
+    "/predict-vertex",
+    response_model=PredictionResponse,
+    dependencies=[Depends(verify_iap)],
+)
 def submit_vertex_pipeline(request: PredictionRequest):
     """
     Submits a Vertex AI Pipeline job for the Boltz-2 model using serverless GPUs.
@@ -240,8 +287,6 @@ def submit_vertex_pipeline(request: PredictionRequest):
             enable_caching=False,
         )
 
-        # Submit the pipeline to run asynchronously on Google Cloud serverless infrastructure
-        # We explicitly request a SPOT (Preemptible) L4 GPU because standard L4 quota is 0.
         pipeline_job.submit(
             service_account=f"ml-job-sa@{project_id}.iam.gserviceaccount.com"
         )
@@ -256,7 +301,7 @@ def submit_vertex_pipeline(request: PredictionRequest):
         )
 
 
-@app.get("/jobs")
+@api_router.get("/jobs", dependencies=[Depends(verify_iap)])
 def list_jobs():
     project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
@@ -311,7 +356,7 @@ def list_jobs():
         )
 
 
-@app.get("/status/{job_id}")
+@api_router.get("/status/{job_id}", dependencies=[Depends(verify_iap)])
 def get_job_status(job_id: str):
     project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
@@ -348,7 +393,7 @@ def get_job_status(job_id: str):
         raise HTTPException(status_code=500, detail=f"Error checking job status: {e}")
 
 
-@app.get("/jobs/{job_id}/cif")
+@api_router.get("/jobs/{job_id}/cif", dependencies=[Depends(verify_iap)])
 def get_job_cif(job_id: str):
     """
     Retrieves the generated .cif file for a given job directly from the output bucket.
@@ -376,6 +421,8 @@ def get_job_cif(job_id: str):
             raise e
         raise HTTPException(status_code=500, detail=f"Error retrieving CIF: {e}")
 
+
+app.include_router(api_router)
 
 if __name__ == "__main__":
     import uvicorn

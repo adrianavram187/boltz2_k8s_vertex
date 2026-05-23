@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-hpc-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: "ml-hpc-global-ip"
+    networking.gke.io/managed-certificates: "ml-hpc-cert"
+    kubernetes.io/ingress.class: "gce"
+spec:
+  defaultBackend:
+    service:
+      name: ml-ui-service
+      port:
+        number: 80
+  rules:
+  - host: ${DOMAIN_NAME}
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: ml-job-api-service
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ml-ui-service
+            port:
+              number: 80

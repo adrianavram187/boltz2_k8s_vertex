@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: ml-hpc-cert
+  namespace: default
+spec:
+  domains:
+    - ${DOMAIN_NAME}

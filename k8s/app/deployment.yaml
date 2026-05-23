@@ -31,3 +31,9 @@ spec:
           value: "gs://${PROJECT_ID}-boltz-outputs"
         - name: INPUT_BUCKET
           value: "gs://${PROJECT_ID}-boltz-inputs"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10

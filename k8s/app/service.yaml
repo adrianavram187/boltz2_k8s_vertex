@@ -3,8 +3,10 @@ kind: Service
 metadata:
   name: ml-job-api-service
   namespace: default
+  annotations:
+    cloud.google.com/backend-config: '{"default": "api-iap-backendconfig"}'
 spec:
-  type: LoadBalancer # Using LoadBalancer to expose the API publicly for testing
+  type: NodePort
   selector:
     app: ml-job-api
   ports:

@@ -34,8 +34,10 @@ kind: Service
 metadata:
   name: ml-ui-service
   namespace: default
+  annotations:
+    cloud.google.com/backend-config: '{"default": "ui-iap-backendconfig"}'
 spec:
-  type: LoadBalancer
+  type: NodePort
   selector:
     app: ml-ui
   ports:

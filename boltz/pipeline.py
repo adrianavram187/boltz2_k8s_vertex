@@ -23,10 +23,6 @@ def boltz_predict_component(
     input_uri: str,
     output_uri: str,
 ):
-    """
-    Executes the Boltz-2 runner container as a Vertex AI Pipeline step.
-    The container expects input_uri and output_uri as CLI arguments.
-    """
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["/app/run.sh"],
@@ -39,10 +35,6 @@ def boltz_predict_component(
     description="Vertex AI Pipeline for Boltz-2 protein folding inference",
 )
 def boltz_pipeline(input_uri: str, output_uri: str):
-    """
-    Main pipeline definition.
-    """
-    # 1. Define the component task
     boltz_task = boltz_predict_component(input_uri=input_uri, output_uri=output_uri)
 
     # 2. Assign resource limits
@@ -50,7 +42,7 @@ def boltz_pipeline(input_uri: str, output_uri: str):
     # However, T4 quota is almost always 1.
     boltz_task.set_cpu_limit("4")
     boltz_task.set_memory_limit("16G")
-    boltz_task.set_accelerator_type("NVIDIA_L4")
+    boltz_task.set_accelerator_type("NVIDIA_TESLA_T4")
     boltz_task.set_accelerator_limit(1)
 
     # Use preemptible to reduce costs and use the preemptible GPU quota

@@ -1,9 +1,19 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Depends, Header
+from fastapi import (
+    FastAPI,
+    APIRouter,
+    HTTPException,
+    UploadFile,
+    File,
+    Depends,
+    Header,
+    Query,
+)
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uuid
 import os
+import base64
 import tempfile
 from kubernetes import client, config
 from dotenv import load_dotenv
@@ -17,6 +27,7 @@ load_dotenv(dotenv_path="../.env")
 
 from google.cloud import aiplatform
 from google.cloud import storage
+import yaml
 
 
 def get_project_id():
@@ -101,6 +112,7 @@ except Exception as e:
 class PredictionRequest(BaseModel):
     model_name: str  # Only 'boltz-2' is supported right now
     input_file: str  # E.g., 'inputs.fasta' (relative to input bucket)
+    config_file: str | None = None  # Optional YAML config file path
 
 
 class PredictionResponse(BaseModel):
@@ -127,6 +139,15 @@ async def upload_file(file: UploadFile = File(...)):
 
         # Read file contents and upload
         contents = await file.read()
+
+        if file.filename and file.filename.lower().endswith((".yaml", ".yml")):
+            try:
+                yaml.safe_load(contents)
+            except yaml.YAMLError as e:
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid YAML file: {str(e)}"
+                )
+
         blob.upload_from_string(contents)
 
         # We return the FULL blob name here (e.g. 'uploads/a1b2c3d4/C7F6X3.fasta')
@@ -283,6 +304,9 @@ def submit_vertex_pipeline(request: PredictionRequest):
             parameter_values={
                 "input_uri": input_uri,
                 "output_uri": output_uri,
+                "config_uri": f"{input_bucket}/{request.config_file}"
+                if request.config_file
+                else "",
             },
             enable_caching=False,
         )
@@ -302,35 +326,56 @@ def submit_vertex_pipeline(request: PredictionRequest):
 
 
 @api_router.get("/jobs", dependencies=[Depends(verify_iap)])
-def list_jobs():
+def list_jobs(
+    page_size: int = Query(
+        10, ge=1, le=50, description="Number of jobs per page (max 50)"
+    ),
+    page_token: str | None = Query(None, description="Opaque cursor for the next page"),
+):
     project_id = get_project_id()
     region = os.environ.get("REGION", "us-central1")
 
     try:
         aiplatform.init(project=project_id, location=region)
 
-        # List recent pipeline jobs
         pipeline_jobs = aiplatform.PipelineJob.list(
             order_by="create_time desc",
         )
 
-        job_list = []
+        all_jobs = []
         for j in pipeline_jobs:
-            # Manually filter by prefix since Vertex API string filtering can be finicky
             if not j.display_name.startswith("vertex-boltz-"):
                 continue
+            all_jobs.append(j)
 
-            # Vertex AI pipeline states: PIPELINE_STATE_PENDING, PIPELINE_STATE_RUNNING, PIPELINE_STATE_SUCCEEDED, PIPELINE_STATE_FAILED
-            status_map = {
-                "PIPELINE_STATE_PENDING": "Pending",
-                "PIPELINE_STATE_RUNNING": "Running",
-                "PIPELINE_STATE_SUCCEEDED": "Succeeded",
-                "PIPELINE_STATE_FAILED": "Failed",
-                "PIPELINE_STATE_CANCELLING": "Failed",
-                "PIPELINE_STATE_CANCELLED": "Failed",
-            }
+        start_idx = 0
+        if page_token:
+            try:
+                start_idx = int(base64.urlsafe_b64decode(page_token.encode()).decode())
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid page_token")
+            if start_idx < 0 or start_idx >= len(all_jobs):
+                raise HTTPException(status_code=400, detail="Invalid page_token")
 
-            # Map state or default to the raw state
+        page = all_jobs[start_idx : start_idx + page_size]
+        has_more = (start_idx + page_size) < len(all_jobs)
+        next_token = (
+            base64.urlsafe_b64encode(str(start_idx + page_size).encode()).decode()
+            if has_more
+            else None
+        )
+
+        status_map = {
+            "PIPELINE_STATE_PENDING": "Pending",
+            "PIPELINE_STATE_RUNNING": "Running",
+            "PIPELINE_STATE_SUCCEEDED": "Succeeded",
+            "PIPELINE_STATE_FAILED": "Failed",
+            "PIPELINE_STATE_CANCELLING": "Failed",
+            "PIPELINE_STATE_CANCELLED": "Failed",
+        }
+
+        job_list = []
+        for j in page:
             state_str = str(j.state.name) if j.state else "UNKNOWN"
             status = status_map.get(state_str, "Pending")
 
@@ -345,11 +390,14 @@ def list_jobs():
                 }
             )
 
-            # Add a manual limit of 20 since we removed it from the API call
-            if len(job_list) >= 20:
-                break
-
-        return {"jobs": job_list}
+        return {
+            "jobs": job_list,
+            "next_page_token": next_token,
+            "has_more": has_more,
+            "total_count": len(all_jobs),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error listing Vertex AI jobs: {e}"

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { UploadCloud, Activity, CheckCircle, Clock, XCircle, RefreshCw, List, Eye, Info } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { UploadCloud, Activity, CheckCircle, Clock, XCircle, RefreshCw, List, Eye, Info, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import YamlConfigForm from "../components/YamlConfigForm";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -9,6 +10,13 @@ interface JobItem {
   model_name: string;
   status: string;
   creation_time: string | null;
+}
+
+interface JobListResponse {
+  jobs: JobItem[];
+  next_page_token: string | null;
+  has_more: boolean;
+  total_count: number | null;
 }
 
 export default function Home() {
@@ -20,30 +28,47 @@ export default function Home() {
   
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  const [pageSize] = useState(10);
+  const [currentPageToken, setCurrentPageToken] = useState<string | null>(null);
+  const [pageTokenStack, setPageTokenStack] = useState<string[]>([]);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [submissionMode, setSubmissionMode] = useState<"fasta" | "yaml">("fasta");
   
   const navigate = useNavigate();
 
-  const fetchJobs = async () => {
-    try {
-      setIsLoadingJobs(true);
-      const baseUrl = API_BASE_URL.replace(/\/$/, "");
-      const res = await fetch(`${baseUrl}/jobs`);
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(data.jobs || []);
+  const fetchJobs = useCallback(
+    async (pageToken: string | null = null) => {
+      try {
+        setIsLoadingJobs(true);
+        const baseUrl = API_BASE_URL.replace(/\/$/, "");
+        const params = new URLSearchParams();
+        params.set("page_size", String(pageSize));
+        if (pageToken) {
+          params.set("page_token", pageToken);
+        }
+        const res = await fetch(`${baseUrl}/jobs?${params.toString()}`);
+        if (res.ok) {
+          const data: JobListResponse = await res.json();
+          setJobs(data.jobs || []);
+          setNextPageToken(data.next_page_token);
+          setHasMore(data.has_more);
+          setTotalCount(data.total_count);
+        }
+      } catch (err) {
+        console.error("Failed to fetch jobs list", err);
+      } finally {
+        setIsLoadingJobs(false);
       }
-    } catch (err) {
-      console.error("Failed to fetch jobs list", err);
-    } finally {
-      setIsLoadingJobs(false);
-    }
-  };
+    },
+    [pageSize]
+  );
 
   useEffect(() => {
-    fetchJobs();
-    const interval = setInterval(fetchJobs, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    fetchJobs(null);
+  }, [fetchJobs]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -95,7 +120,10 @@ export default function Home() {
       const predictData = await predictRes.json();
       setJobId(predictData.job_id);
       setJobStatus("Pending");
-      fetchJobs();
+      setCurrentPageToken(null);
+      setPageTokenStack([]);
+      setCurrentPage(1);
+      fetchJobs(null);
     } catch (err: any) {
       setError(err.message || "An error occurred");
     } finally {
@@ -115,6 +143,88 @@ export default function Home() {
       setJobStatus(data.status);
     } catch (err: any) {
       setError("Failed to check status: " + err.message);
+    }
+  };
+
+  const goNext = () => {
+    if (!nextPageToken) return;
+    setPageTokenStack((prev) => [...prev, currentPageToken ?? ""]);
+    setCurrentPageToken(nextPageToken);
+    setCurrentPage((prev) => prev + 1);
+    fetchJobs(nextPageToken);
+  };
+
+  const goPrev = () => {
+    if (pageTokenStack.length === 0) return;
+    const prevStack = [...pageTokenStack];
+    const prevToken = prevStack.pop() ?? null;
+    setPageTokenStack(prevStack);
+    const token = prevToken === "" ? null : prevToken;
+    setCurrentPageToken(token);
+    setCurrentPage((prev) => Math.max(1, prev - 1));
+    fetchJobs(token);
+  };
+
+  const handleRefresh = () => {
+    setCurrentPageToken(null);
+    setPageTokenStack([]);
+    setCurrentPage(1);
+    fetchJobs(null);
+  };
+
+  const handleYamlSubmit = async (yamlString: string) => {
+    setIsUploading(true);
+    setError(null);
+    setJobId(null);
+    setJobStatus(null);
+
+    try {
+      const baseUrl = API_BASE_URL.replace(/\/$/, "");
+
+      const yamlBlob = new Blob([yamlString], { type: "application/x-yaml" });
+      const yamlFile = new File([yamlBlob], "config.yaml", { type: "application/x-yaml" });
+      const formData = new FormData();
+      formData.append("file", yamlFile);
+
+      const uploadRes = await fetch(`${baseUrl}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        const errData = await uploadRes.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to upload YAML config");
+      }
+
+      const uploadData = await uploadRes.json();
+      const configFilename = uploadData.filename;
+
+      const predictRes = await fetch(`${baseUrl}/predict-vertex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_name: "boltz-2",
+          input_file: configFilename,
+          config_file: configFilename,
+        }),
+      });
+
+      if (!predictRes.ok) {
+        const errData = await predictRes.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to submit job");
+      }
+
+      const predictData = await predictRes.json();
+      setJobId(predictData.job_id);
+      setJobStatus("Pending");
+      setCurrentPageToken(null);
+      setPageTokenStack([]);
+      setCurrentPage(1);
+      fetchJobs(null);
+    } catch (err: any) {
+      setError(err.message || "An error occurred");
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -151,7 +261,37 @@ NSPFVPAPEVVQKRSNARQWL`}
             </div>
           </div>
         </h2>
-        
+
+        <div className="flex items-center gap-1 mb-6 bg-gray-100 rounded-lg p-1">
+          <button
+            onClick={() => setSubmissionMode("fasta")}
+            className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-colors ${
+              submissionMode === "fasta"
+                ? "bg-white text-gray-900 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Quick (FASTA)
+          </button>
+          <button
+            onClick={() => setSubmissionMode("yaml")}
+            className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-colors ${
+              submissionMode === "yaml"
+                ? "bg-white text-gray-900 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Advanced (YAML Schema)
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">
+          {submissionMode === "fasta"
+            ? "Upload a single FASTA file for quick single-sequence prediction."
+            : "Configure multi-chain complexes, constraints, templates, and binding properties."}
+        </p>
+
+        {submissionMode === "fasta" && (
+          <>
         <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-gsk-orange transition-colors">
           <input
             type="file"
@@ -175,6 +315,12 @@ NSPFVPAPEVVQKRSNARQWL`}
         >
           {isUploading ? "Processing..." : "Run Boltz-2 Inference"}
         </button>
+          </>
+        )}
+
+        {submissionMode === "yaml" && (
+          <YamlConfigForm onSubmit={handleYamlSubmit} isUploading={isUploading} />
+        )}
 
         {error && (
           <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100 flex items-start gap-2">
@@ -223,7 +369,7 @@ NSPFVPAPEVVQKRSNARQWL`}
               </button>
             )}
           </div>
-        </div>
+          </div>
       )}
 
       {/* Recent Jobs Card */}
@@ -234,7 +380,7 @@ NSPFVPAPEVVQKRSNARQWL`}
             Recent Jobs
           </h2>
           <button
-            onClick={fetchJobs}
+            onClick={handleRefresh}
             className={`text-gray-500 hover:text-gsk-orange transition-colors ${isLoadingJobs ? "animate-spin" : ""}`}
             title="Refresh List"
           >
@@ -247,6 +393,7 @@ NSPFVPAPEVVQKRSNARQWL`}
             No jobs found.
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
@@ -286,6 +433,34 @@ NSPFVPAPEVVQKRSNARQWL`}
               </tbody>
             </table>
           </div>
+
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+            <span className="text-xs text-gray-400">
+              {totalCount !== null ? `${totalCount} total jobs` : ""}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goPrev}
+                disabled={pageTokenStack.length === 0}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Prev
+              </button>
+              <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+                Page {currentPage}
+              </span>
+              <button
+                onClick={goNext}
+                disabled={!hasMore}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          </>
         )}
         </div>
       </main>

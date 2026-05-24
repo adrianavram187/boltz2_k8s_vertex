@@ -22,11 +22,12 @@ IMAGE_URI = f"gcr.io/{PROJECT_ID}/boltz-runner:latest"
 def boltz_predict_component(
     input_uri: str,
     output_uri: str,
+    config_uri: str = "",
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["/app/run.sh"],
-        args=[input_uri, output_uri],
+        args=[input_uri, output_uri, config_uri],
     )
 
 
@@ -34,8 +35,10 @@ def boltz_predict_component(
     name="boltz-inference-pipeline",
     description="Vertex AI Pipeline for Boltz-2 protein folding inference",
 )
-def boltz_pipeline(input_uri: str, output_uri: str):
-    boltz_task = boltz_predict_component(input_uri=input_uri, output_uri=output_uri)
+def boltz_pipeline(input_uri: str, output_uri: str, config_uri: str = ""):
+    boltz_task = boltz_predict_component(
+        input_uri=input_uri, output_uri=output_uri, config_uri=config_uri
+    )
 
     # 2. Assign resource limits
     # Vertex AI Custom Model Training quota for L4 is often 0 for new projects.
